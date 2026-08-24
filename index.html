@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#17335b">
+  <title>UCEMA | Encuesta de experiencia</title>
+  <style>
+    :root {
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      color: #17335b;
+      background: #f4f7fb;
+      font-synthesis: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      min-height: 100%;
+      margin: 0;
+      overflow: hidden;
+      overscroll-behavior: none;
+      touch-action: manipulation;
+    }
+
+    button { font: inherit; }
+
+    .app {
+      width: 100vw;
+      height: 100dvh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      background:
+        radial-gradient(circle at 50% 5%, rgba(255,255,255,.98), rgba(249,251,254,.96) 58%, rgba(237,242,248,.98)),
+        #f4f7fb;
+    }
+
+    .institutional-header {
+      min-height: 92px;
+      padding: 18px clamp(24px, 4vw, 54px);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      color: #fff;
+      background: #17335b;
+      box-shadow: 0 5px 20px rgba(16, 38, 72, .18);
+    }
+
+    .ucema-brand {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .ucema-symbol {
+      width: 56px;
+      height: 56px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      border: 2px solid currentColor;
+      border-radius: 50%;
+      font: 600 17px Georgia, serif;
+      letter-spacing: -.04em;
+    }
+
+    .ucema-name {
+      display: flex;
+      flex-direction: column;
+      line-height: 1;
+    }
+
+    .ucema-name strong {
+      font: 500 clamp(28px, 3.8vw, 42px) Georgia, serif;
+      letter-spacing: .045em;
+    }
+
+    .ucema-name small {
+      margin-top: 7px;
+      font-size: clamp(9px, 1.15vw, 12px);
+      letter-spacing: .15em;
+      text-transform: uppercase;
+      opacity: .9;
+    }
+
+    .location {
+      font-size: clamp(13px, 1.6vw, 17px);
+      white-space: nowrap;
+      opacity: .82;
+    }
+
+    .survey {
+      min-height: 0;
+      padding: clamp(22px, 4vh, 46px) clamp(28px, 5vw, 76px) clamp(14px, 2.5vh, 28px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    h1 {
+      margin: 0;
+      color: #17335b;
+      font: 500 clamp(32px, 5vw, 58px)/1.05 Georgia, serif;
+      text-align: center;
+    }
+
+    .instruction {
+      margin: 10px 0 0;
+      color: #66748a;
+      font-size: clamp(16px, 2vw, 22px);
+      text-align: center;
+    }
+
+    .choices {
+      width: min(100%, 1220px);
+      min-height: 0;
+      flex: 1;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      align-items: center;
+      gap: clamp(22px, 5vw, 88px);
+      padding-top: clamp(20px, 3vh, 38px);
+    }
+
+    .choice {
+      min-width: 0;
+      border: 0;
+      padding: 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: clamp(8px, 1.6vh, 16px);
+      color: #263b5d;
+      background: transparent;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .choice img {
+      width: min(100%, 290px);
+      max-height: 38vh;
+      aspect-ratio: 1;
+      object-fit: contain;
+      filter: drop-shadow(0 13px 14px rgba(25, 45, 72, .14));
+      transform: scale(1);
+      transition:
+        transform 170ms cubic-bezier(.2, .86, .32, 1.38),
+        filter 170ms ease,
+        opacity 170ms ease;
+      will-change: transform;
+    }
+
+    .choice-label {
+      font-size: clamp(18px, 2.4vw, 28px);
+      font-weight: 600;
+      letter-spacing: .01em;
+    }
+
+    .choice:focus-visible {
+      outline: 4px solid rgba(23, 51, 91, .34);
+      outline-offset: 8px;
+      border-radius: 18px;
+    }
+
+    .choice.is-pressed img,
+    .choice:active img {
+      filter: drop-shadow(0 4px 5px rgba(25, 45, 72, .12));
+      transform: scale(.86);
+    }
+
+    .choices.is-locked .choice:not(.is-pressed) img { opacity: .58; }
+
+    .footer {
+      min-height: 42px;
+      padding: 0 clamp(24px, 4vw, 54px);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      color: #778398;
+      background: #eef2f7;
+      font-size: clamp(11px, 1.25vw, 14px);
+    }
+
+    .powered-by { color: #17335b; }
+
+    .confirmation {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: grid;
+      place-content: center;
+      justify-items: center;
+      gap: 13px;
+      padding: 32px;
+      color: #17335b;
+      background: rgba(255, 255, 255, .985);
+      opacity: 0;
+      pointer-events: none;
+      transform: scale(.985);
+      transition: opacity 190ms ease, transform 230ms ease;
+    }
+
+    .confirmation.is-visible {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    .confirmation-icon {
+      width: clamp(92px, 13vw, 142px);
+      height: clamp(92px, 13vw, 142px);
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: #fff;
+      background: #17335b;
+      font-size: clamp(48px, 7vw, 76px);
+    }
+
+    .confirmation.is-visible .confirmation-icon {
+      animation: confirm-pop 430ms cubic-bezier(.2, .9, .25, 1.36);
+    }
+
+    .confirmation strong {
+      font: 500 clamp(36px, 5vw, 58px) Georgia, serif;
+      text-align: center;
+    }
+
+    .confirmation span {
+      color: #66748a;
+      font-size: clamp(16px, 2vw, 22px);
+      text-align: center;
+    }
+
+    .portrait-warning {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: none;
+      place-content: center;
+      padding: 36px;
+      color: #fff;
+      background: #17335b;
+      text-align: center;
+    }
+
+    .portrait-warning strong {
+      font: 500 32px/1.15 Georgia, serif;
+    }
+
+    .portrait-warning span {
+      display: block;
+      margin-top: 12px;
+      opacity: .82;
+    }
+
+    @keyframes confirm-pop {
+      0% { transform: scale(.55); }
+      68% { transform: scale(1.13); }
+      100% { transform: scale(1); }
+    }
+
+    @media (orientation: portrait) {
+      .portrait-warning { display: grid; }
+    }
+
+    @media (max-height: 620px) and (orientation: landscape) {
+      .institutional-header { min-height: 72px; padding-top: 10px; padding-bottom: 10px; }
+      .ucema-symbol { width: 46px; height: 46px; }
+      .survey { padding-top: 18px; }
+      .choice img { max-height: 34vh; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: .01ms !important;
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="institutional-header">
+      <div class="ucema-brand" aria-label="Universidad del CEMA">
+        <div class="ucema-symbol" aria-hidden="true">UC</div>
+        <div class="ucema-name">
+          <strong>UCEMA</strong>
+          <small>Universidad del CEMA</small>
+        </div>
+      </div>
+      <div class="location">Sede Central</div>
+    </header>
+
+    <main class="survey">
+      <h1>¿Cómo fue tu experiencia hoy?</h1>
+      <p class="instruction">Tu opinión nos ayuda a mejorar. Tocá una opción.</p>
+
+      <div class="choices" id="choices">
+        <button class="choice" type="button" data-rating="negative" aria-label="Mi experiencia fue mala">
+          <img src="assets/emojis/pulse-negative-red.png" alt="Carita roja triste" draggable="false">
+          <span class="choice-label">Mala</span>
+        </button>
+
+        <button class="choice" type="button" data-rating="neutral" aria-label="Mi experiencia fue regular">
+          <img src="assets/emojis/pulse-neutral-yellow.png" alt="Carita amarilla neutral" draggable="false">
+          <span class="choice-label">Regular</span>
+        </button>
+
+        <button class="choice" type="button" data-rating="positive" aria-label="Mi experiencia fue muy buena">
+          <img src="assets/emojis/pulse-positive-green.png" alt="Carita verde feliz" draggable="false">
+          <span class="choice-label">Muy buena</span>
+        </button>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <span>Encuesta anónima</span>
+      <span class="powered-by">Experiencia medida con PulseCX</span>
+    </footer>
+  </div>
+
+  <section class="confirmation" id="confirmation" aria-live="polite" aria-hidden="true">
+    <div class="confirmation-icon" aria-hidden="true">✓</div>
+    <strong>¡Gracias por tu opinión!</strong>
+    <span>Tu respuesta fue recibida</span>
+  </section>
+
+  <aside class="portrait-warning" aria-live="polite">
+    <div>
+      <strong>Gir&aacute; la tablet</strong>
+      <span>PulseCX está diseñado para usarse en posición horizontal.</span>
+    </div>
+  </aside>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const CONFIG = Object.freeze({
+        confirmationDurationMs: 1450,
+        pressDurationMs: 170,
+        vibrationDurationMs: 35,
+        endpointUrl: ""
+      });
+
+      const choices = document.getElementById("choices");
+      const confirmation = document.getElementById("confirmation");
+      let isSubmitting = false;
+
+      function createEvent(rating) {
+        return {
+          event_id: crypto.randomUUID(),
+          rating,
+          device_id: "ucema-central-01",
+          location_id: "ucema-sede-central",
+          client_timestamp: new Date().toISOString(),
+          app_version: "web-prototype-1.0.0"
+        };
+      }
+
+      async function submitResponse(event) {
+        if (!CONFIG.endpointUrl) {
+          console.info("PulseCX: voto simulado", event);
+          return { ok: true, simulated: true };
+        }
+
+        const response = await fetch(CONFIG.endpointUrl, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify(event)
+        });
+
+        if (!response.ok) {
+          throw new Error(`El servidor respondió ${response.status}`);
+        }
+
+        return { ok: true, simulated: false };
+      }
+
+      function vibrate() {
+        if ("vibrate" in navigator) {
+          navigator.vibrate(CONFIG.vibrationDurationMs);
+        }
+      }
+
+      function showConfirmation() {
+        confirmation.classList.add("is-visible");
+        confirmation.setAttribute("aria-hidden", "false");
+      }
+
+      function hideConfirmation() {
+        confirmation.classList.remove("is-visible");
+        confirmation.setAttribute("aria-hidden", "true");
+      }
+
+      async function handleChoice(button) {
+        if (isSubmitting) return;
+
+        isSubmitting = true;
+        choices.classList.add("is-locked");
+        button.classList.add("is-pressed");
+        vibrate();
+
+        const event = createEvent(button.dataset.rating);
+        const minimumPress = new Promise(resolve => {
+          window.setTimeout(resolve, CONFIG.pressDurationMs);
+        });
+
+        try {
+          await Promise.all([submitResponse(event), minimumPress]);
+          button.classList.remove("is-pressed");
+          showConfirmation();
+
+          window.setTimeout(() => {
+            hideConfirmation();
+            choices.classList.remove("is-locked");
+            isSubmitting = false;
+          }, CONFIG.confirmationDurationMs);
+        } catch (error) {
+          console.error("PulseCX: no se pudo registrar el voto", error);
+          button.classList.remove("is-pressed");
+          choices.classList.remove("is-locked");
+          isSubmitting = false;
+        }
+      }
+
+      choices.addEventListener("click", event => {
+        const button = event.target.closest(".choice");
+        if (button) handleChoice(button);
+      });
+    })();
+  </script>
+</body>
+</html>
