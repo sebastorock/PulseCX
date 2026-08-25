@@ -1,0 +1,28 @@
+{
+  "id": "./",
+  "name": "PulseCX UCEMA",
+  "short_name": "PulseCX",
+  "description": "Encuesta de experiencia para UCEMA",
+  "lang": "es-AR",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#f4f7fb",
+  "theme_color": "#17335b",
+  "icons": [
+    {
+      "src": "assets/icons/pulsecx-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "assets/icons/pulsecx-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
