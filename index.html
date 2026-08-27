@@ -291,6 +291,8 @@
     }
 
     .powered-by { color: #17335b; }
+    .preload-ready-mark { color: #188653; font-weight: 800; }
+    .preload-ready-mark[hidden] { display: none; }
 
     .confirmation {
       position: fixed;
@@ -514,7 +516,7 @@
 
     <footer class="footer">
       <span id="privacyNotice">La cámara se activa al responder · la foto no se guarda</span>
-      <span class="powered-by">Experiencia medida con PulseCX V2.1</span>
+      <span class="powered-by"><span class="preload-ready-mark" id="preloadReadyMark" hidden aria-hidden="true">✓</span> Experiencia medida con PulseCX V2.1</span>
     </footer>
   </div>
 
@@ -584,6 +586,7 @@
       const protectionLabel = document.getElementById("protectionLabel");
       const privacyNotice = document.getElementById("privacyNotice");
       const resetProtectionButton = document.getElementById("resetProtectionButton");
+      const preloadReadyMark = document.getElementById("preloadReadyMark");
       const cameraBuffer = document.getElementById("cameraBuffer");
       const adminPanel = document.getElementById("adminPanel");
       const adminVibration = document.getElementById("adminVibration");
@@ -751,6 +754,7 @@
             warmupCanvas,
             new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 })
           );
+          preloadReadyMark.hidden = false;
           adminModel.textContent = "Listo · protección precargada";
           return true;
         }).catch(error => {
