@@ -1,8 +1,13 @@
-const CACHE_NAME = "pulsecx-ucema-v1";
+const CACHE_NAME = "pulsecx-ucema-v4";
 const APP_FILES = [
   "./",
   "./index.html",
   "./site.webmanifest",
+  "./vendor/face-api.min.js",
+  "./models/tiny_face_detector_model-weights_manifest.json",
+  "./models/tiny_face_detector_model-shard1",
+  "./models/age_gender_model-weights_manifest.json",
+  "./models/age_gender_model-shard1",
   "./assets/icons/pulsecx-192.png",
   "./assets/icons/pulsecx-512.png",
   "./assets/emojis/pulse-negative-red.png",

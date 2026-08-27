@@ -305,6 +305,66 @@
       opacity: .82;
     }
 
+    .camera-buffer {
+      position: fixed;
+      left: -2px;
+      bottom: -2px;
+      width: 1px;
+      height: 1px;
+      opacity: .001;
+      pointer-events: none;
+    }
+
+    .admin-panel {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 40;
+      width: min(390px, calc(100vw - 36px));
+      border: 1px solid rgba(23, 51, 91, .18);
+      border-radius: 16px;
+      padding: 18px;
+      color: #17335b;
+      background: rgba(255,255,255,.97);
+      box-shadow: 0 16px 45px rgba(18,37,67,.24);
+    }
+
+    .admin-panel[hidden] { display: none; }
+
+    .admin-panel h2 {
+      margin: 0 0 12px;
+      font-size: 20px;
+    }
+
+    .admin-status {
+      margin: 0 0 14px;
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 7px 12px;
+      font-size: 13px;
+    }
+
+    .admin-status dt { color: #68768a; }
+    .admin-status dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+
+    .admin-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .admin-button {
+      min-height: 42px;
+      border: 1px solid #17335b;
+      border-radius: 9px;
+      padding: 0 14px;
+      color: #17335b;
+      background: #fff;
+      cursor: pointer;
+    }
+
+    .admin-button.primary { color: #fff; background: #17335b; }
+
     @keyframes confirm-pop {
       0% { transform: scale(.55); }
       68% { transform: scale(1.13); }
@@ -375,7 +435,7 @@
     </main>
 
     <footer class="footer">
-      <span>Encuesta anónima</span>
+      <span>La cámara se activa al responder · la foto no se guarda</span>
       <span class="powered-by">Experiencia medida con PulseCX</span>
     </footer>
   </div>
@@ -393,6 +453,26 @@
     </div>
   </aside>
 
+  <video class="camera-buffer" id="cameraBuffer" muted playsinline aria-hidden="true"></video>
+
+  <section class="admin-panel" id="adminPanel" hidden aria-label="Diagnóstico de PulseCX">
+    <h2>Diagnóstico del dispositivo</h2>
+    <dl class="admin-status">
+      <dt>Vibración API</dt><dd id="adminVibration">Sin probar</dd>
+      <dt>Cámara</dt><dd id="adminCamera">Sin probar</dd>
+      <dt>Última captura</dt><dd id="adminCapture">—</dd>
+      <dt>Modelo demográfico</dt><dd id="adminModel">Cargando…</dd>
+      <dt>Última estimación</dt><dd id="adminDemographics">—</dd>
+      <dt>Aplicación</dt><dd>web-prototype-1.3.0</dd>
+    </dl>
+    <div class="admin-actions">
+      <button class="admin-button primary" id="testCameraButton" type="button">Probar cámara</button>
+      <button class="admin-button" id="testVibrationButton" type="button">Probar vibración</button>
+      <button class="admin-button" id="closeAdminButton" type="button">Cerrar</button>
+    </div>
+  </section>
+
+  <script src="vendor/face-api.min.js"></script>
   <script>
     (() => {
       "use strict";
@@ -400,14 +480,39 @@
       const CONFIG = Object.freeze({
         confirmationDurationMs: 1450,
         pressDurationMs: 170,
-        vibrationDurationMs: 35,
-        endpointUrl: ""
+        vibrationPatternMs: [45, 25, 45],
+        cameraTimeoutMs: 3000,
+        modelPath: "./models",
+        presentationConfidenceMin: 0.75,
+        cameraConstraints: {
+          audio: false,
+          video: {
+            facingMode: { ideal: "user" },
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 10, max: 15 }
+          }
+        },
+        endpointUrl: "https://script.google.com/macros/s/AKfycbyLEAtssr3MlQ_FrYhMvD2Tbdff6nGSs3_Q3DunTFhYc0vOQx-dyug3Ega4814P_-F6Pw/exec"
       });
 
       const choices = document.getElementById("choices");
       const confirmation = document.getElementById("confirmation");
       const fullscreenButton = document.getElementById("fullscreenButton");
+      const cameraBuffer = document.getElementById("cameraBuffer");
+      const adminPanel = document.getElementById("adminPanel");
+      const adminVibration = document.getElementById("adminVibration");
+      const adminCamera = document.getElementById("adminCamera");
+      const adminCapture = document.getElementById("adminCapture");
+      const adminModel = document.getElementById("adminModel");
+      const adminDemographics = document.getElementById("adminDemographics");
+      const testCameraButton = document.getElementById("testCameraButton");
+      const testVibrationButton = document.getElementById("testVibrationButton");
+      const closeAdminButton = document.getElementById("closeAdminButton");
       let isSubmitting = false;
+      let activeInteraction = null;
+      let modelLoadPromise = null;
+      let inferenceQueue = Promise.resolve();
 
       async function enterFullscreen() {
         try {
@@ -430,7 +535,22 @@
           device_id: "ucema-central-01",
           location_id: "ucema-sede-central",
           client_timestamp: new Date().toISOString(),
-          app_version: "web-prototype-1.0.0"
+          app_version: "web-prototype-1.3.0",
+          camera_status: "starting",
+          capture_ms: null,
+          capture_width: null,
+          capture_height: null,
+          model_status: "pending",
+          model_version: "face-api.js-0.22.2-age-gender",
+          face_detected: false,
+          face_count: 0,
+          face_detection_confidence: null,
+          apparent_presentation: "not_available",
+          presentation_confidence: null,
+          estimated_age_band: "not_available",
+          inference_ms: null,
+          vibration_available: "vibrate" in navigator,
+          vibration_accepted: false
         };
       }
 
@@ -443,19 +563,218 @@
         const response = await fetch(CONFIG.endpointUrl, {
           method: "POST",
           headers: { "Content-Type": "text/plain;charset=utf-8" },
-          body: JSON.stringify(event)
+          body: JSON.stringify(event),
+          mode: "no-cors",
+          credentials: "omit",
+          cache: "no-store",
+          keepalive: true
         });
 
-        if (!response.ok) {
-          throw new Error(`El servidor respondió ${response.status}`);
-        }
-
-        return { ok: true, simulated: false };
+        // Apps Script recibe el POST, pero no expone su respuesta a otro dominio.
+        // Una respuesta "opaque" confirma que el navegador despachó la solicitud.
+        return { ok: true, simulated: false, delivery: response.type };
       }
 
       function vibrate() {
-        if ("vibrate" in navigator) {
-          navigator.vibrate(CONFIG.vibrationDurationMs);
+        if (!("vibrate" in navigator)) return false;
+        return navigator.vibrate(CONFIG.vibrationPatternMs);
+      }
+
+      function stopCamera(stream) {
+        if (stream) stream.getTracks().forEach(track => track.stop());
+        cameraBuffer.pause();
+        cameraBuffer.srcObject = null;
+      }
+
+      function loadDemographicModels() {
+        if (modelLoadPromise) return modelLoadPromise;
+
+        if (!window.faceapi) {
+          modelLoadPromise = Promise.reject(new Error("No se cargó la biblioteca de análisis"));
+          return modelLoadPromise;
+        }
+
+        adminModel.textContent = "Cargando…";
+        modelLoadPromise = Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(CONFIG.modelPath),
+          faceapi.nets.ageGenderNet.loadFromUri(CONFIG.modelPath)
+        ]).then(() => {
+          adminModel.textContent = "Listo · procesamiento local";
+          return true;
+        }).catch(error => {
+          adminModel.textContent = `Error · ${error.message}`;
+          throw error;
+        });
+        return modelLoadPromise;
+      }
+
+      function ageBand(age) {
+        if (!Number.isFinite(age)) return "uncertain";
+        if (age < 18) return "under_18";
+        if (age < 30) return "18_29";
+        if (age < 50) return "30_49";
+        return "50_plus";
+      }
+
+      async function runDemographicInference(canvas) {
+        const startedAt = performance.now();
+
+        try {
+          await loadDemographicModels();
+          const detections = await faceapi
+            .detectAllFaces(canvas, new faceapi.TinyFaceDetectorOptions({
+              inputSize: 224,
+              scoreThreshold: 0.5
+            }))
+            .withAgeAndGender();
+
+          const base = {
+            model_status: detections.length === 1 ? "estimated" : (detections.length ? "multiple_faces" : "no_face"),
+            face_detected: detections.length > 0,
+            face_count: detections.length,
+            face_detection_confidence: detections.length === 1
+              ? Number(detections[0].detection.score.toFixed(3))
+              : null,
+            apparent_presentation: "uncertain",
+            presentation_confidence: null,
+            estimated_age_band: "uncertain",
+            inference_ms: Math.round(performance.now() - startedAt)
+          };
+
+          if (detections.length !== 1) return base;
+
+          const detection = detections[0];
+          const confidence = Number(detection.genderProbability.toFixed(3));
+          return {
+            ...base,
+            apparent_presentation: confidence >= CONFIG.presentationConfidenceMin
+              ? (detection.gender === "male" ? "masculine" : "feminine")
+              : "uncertain",
+            presentation_confidence: confidence,
+            estimated_age_band: ageBand(detection.age),
+            inference_ms: Math.round(performance.now() - startedAt)
+          };
+        } catch (error) {
+          return {
+            model_status: "error",
+            face_detected: false,
+            face_count: 0,
+            face_detection_confidence: null,
+            apparent_presentation: "not_available",
+            presentation_confidence: null,
+            estimated_age_band: "not_available",
+            inference_ms: Math.round(performance.now() - startedAt),
+            inference_error: error.message
+          };
+        }
+      }
+
+      function inferDemographics(canvas) {
+        const next = inferenceQueue.then(() => runDemographicInference(canvas));
+        inferenceQueue = next.catch(() => {});
+        return next;
+      }
+
+      function withTimeout(promise, timeoutMs, message) {
+        let timer;
+        const timeout = new Promise((_, reject) => {
+          timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+        });
+        return Promise.race([promise, timeout]).finally(() => window.clearTimeout(timer));
+      }
+
+      async function waitForFirstFrame(video) {
+        if ("requestVideoFrameCallback" in video) {
+          await new Promise(resolve => video.requestVideoFrameCallback(() => resolve()));
+          return;
+        }
+
+        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return;
+        await new Promise((resolve, reject) => {
+          video.addEventListener("loadeddata", resolve, { once: true });
+          video.addEventListener("error", () => reject(new Error("No se pudo leer el video")), { once: true });
+        });
+      }
+
+      async function requestCameraStream(allowPermissionPrompt) {
+        if (!allowPermissionPrompt && localStorage.getItem("pulsecx.cameraReady") !== "1") {
+          const error = new Error("La cámara todavía no fue habilitada por un administrador");
+          error.name = "CameraNotConfiguredError";
+          throw error;
+        }
+
+        const request = navigator.mediaDevices.getUserMedia(CONFIG.cameraConstraints);
+        let timedOut = false;
+
+        try {
+          return await withTimeout(
+            request,
+            CONFIG.cameraTimeoutMs,
+            "La cámara tardó demasiado en iniciar"
+          );
+        } catch (error) {
+          timedOut = error.message === "La cámara tardó demasiado en iniciar";
+          if (timedOut) {
+            request.then(lateStream => stopCamera(lateStream)).catch(() => {});
+          }
+          throw error;
+        }
+      }
+
+      async function captureFirstFrame({ allowPermissionPrompt = false } = {}) {
+        const startedAt = performance.now();
+        let stream = null;
+
+        try {
+          if (!navigator.mediaDevices?.getUserMedia) {
+            throw new Error("La cámara web no está disponible en este navegador");
+          }
+
+          stream = await requestCameraStream(allowPermissionPrompt);
+
+          cameraBuffer.srcObject = stream;
+          await cameraBuffer.play();
+          await withTimeout(
+            waitForFirstFrame(cameraBuffer),
+            CONFIG.cameraTimeoutMs,
+            "No llegó el primer fotograma"
+          );
+
+          const canvas = document.createElement("canvas");
+          canvas.width = cameraBuffer.videoWidth || 640;
+          canvas.height = cameraBuffer.videoHeight || 480;
+          const context = canvas.getContext("2d", { willReadFrequently: true });
+          context.drawImage(cameraBuffer, 0, 0, canvas.width, canvas.height);
+
+          const result = {
+            camera_status: "captured",
+            capture_ms: Math.round(performance.now() - startedAt),
+            capture_width: canvas.width,
+            capture_height: canvas.height
+          };
+
+          // La cámara ya no es necesaria: se apaga antes de analizar el fotograma en memoria.
+          stopCamera(stream);
+          stream = null;
+          const demographics = await inferDemographics(canvas);
+
+          context.clearRect(0, 0, canvas.width, canvas.height);
+          canvas.width = 0;
+          canvas.height = 0;
+          return { ...result, ...demographics };
+        } catch (error) {
+          return {
+            camera_status: error.name === "NotAllowedError"
+              ? "permission_denied"
+              : (error.name === "CameraNotConfiguredError" ? "not_configured" : "error"),
+            capture_ms: Math.round(performance.now() - startedAt),
+            capture_width: null,
+            capture_height: null,
+            model_status: "not_run",
+            camera_error: error.message
+          };
+        } finally {
+          stopCamera(stream);
         }
       }
 
@@ -469,36 +788,109 @@
         confirmation.setAttribute("aria-hidden", "true");
       }
 
-      async function handleChoice(button) {
-        if (isSubmitting) return;
-
+      function beginInteraction(button) {
+        if (isSubmitting) return null;
         isSubmitting = true;
         choices.classList.add("is-locked");
         button.classList.add("is-pressed");
-        vibrate();
-
         const event = createEvent(button.dataset.rating);
-        const minimumPress = new Promise(resolve => {
-          window.setTimeout(resolve, CONFIG.pressDurationMs);
-        });
+        event.vibration_accepted = vibrate();
+
+        const interaction = {
+          button,
+          event,
+          capturePromise: captureFirstFrame(),
+          finished: false,
+          recoveryTimer: null
+        };
+        interaction.recoveryTimer = window.setTimeout(() => {
+          if (interaction.finished) return;
+          interaction.button.classList.remove("is-pressed");
+          choices.classList.remove("is-locked");
+          isSubmitting = false;
+          activeInteraction = null;
+        }, CONFIG.cameraTimeoutMs + 750);
+        activeInteraction = interaction;
+        return interaction;
+      }
+
+      async function processInteraction(interaction) {
+        const cameraResult = await interaction.capturePromise;
+        Object.assign(interaction.event, cameraResult);
+        updateAdminStatus(interaction.event);
 
         try {
-          await Promise.all([submitResponse(event), minimumPress]);
-          button.classList.remove("is-pressed");
+          await submitResponse(interaction.event);
+        } catch (error) {
+          console.error("PulseCX: no se pudo registrar el voto", error);
+        }
+      }
+
+      function finishPublicInteraction(interaction) {
+        if (interaction.finished) return;
+        interaction.finished = true;
+        window.clearTimeout(interaction.recoveryTimer);
+
+        window.setTimeout(() => {
+          interaction.button.classList.remove("is-pressed");
           showConfirmation();
 
           window.setTimeout(() => {
             hideConfirmation();
             choices.classList.remove("is-locked");
             isSubmitting = false;
+            activeInteraction = null;
           }, CONFIG.confirmationDurationMs);
-        } catch (error) {
-          console.error("PulseCX: no se pudo registrar el voto", error);
-          button.classList.remove("is-pressed");
-          choices.classList.remove("is-locked");
-          isSubmitting = false;
+        }, CONFIG.pressDurationMs);
+
+        processInteraction(interaction);
+      }
+
+      function handleChoice(button) {
+        const interaction = activeInteraction?.button === button
+          ? activeInteraction
+          : beginInteraction(button);
+        if (!interaction || interaction.finished) return;
+        finishPublicInteraction(interaction);
+      }
+
+      function updateAdminStatus(event) {
+        adminVibration.textContent = event.vibration_available
+          ? (event.vibration_accepted ? "Solicitud aceptada" : "Disponible, no aceptada")
+          : "No disponible";
+        adminCamera.textContent = event.camera_status;
+        adminCapture.textContent = event.capture_width
+          ? `${event.capture_ms} ms · ${event.capture_width}×${event.capture_height}`
+          : `${event.capture_ms} ms · ${event.camera_error || "sin imagen"}`;
+        adminDemographics.textContent = event.model_status === "estimated"
+          ? `${event.estimated_age_band} · ${event.apparent_presentation} (${event.presentation_confidence}) · ${event.inference_ms} ms`
+          : `${event.model_status}${event.face_count ? ` · ${event.face_count} rostros` : ""}`;
+      }
+
+      async function runCameraDiagnostic() {
+        testCameraButton.disabled = true;
+        adminCamera.textContent = "Iniciando…";
+
+        try {
+          const result = await captureFirstFrame({ allowPermissionPrompt: true });
+          const diagnosticEvent = createEvent("diagnostic");
+          diagnosticEvent.vibration_accepted = false;
+          Object.assign(diagnosticEvent, result);
+          if (result.camera_status === "captured") {
+            localStorage.setItem("pulsecx.cameraReady", "1");
+          } else if (result.camera_status === "permission_denied") {
+            localStorage.removeItem("pulsecx.cameraReady");
+          }
+          updateAdminStatus(diagnosticEvent);
+        } finally {
+          testCameraButton.disabled = false;
         }
       }
+
+      choices.addEventListener("pointerdown", event => {
+        const button = event.target.closest(".choice");
+        if (button) beginInteraction(button);
+      });
 
       choices.addEventListener("click", event => {
         const button = event.target.closest(".choice");
@@ -506,6 +898,26 @@
       });
 
       fullscreenButton.addEventListener("click", enterFullscreen);
+      testCameraButton.addEventListener("click", runCameraDiagnostic);
+      testVibrationButton.addEventListener("click", () => {
+        const accepted = vibrate();
+        adminVibration.textContent = "vibrate" in navigator
+          ? (accepted ? "Solicitud aceptada" : "Disponible, no aceptada")
+          : "No disponible";
+      });
+      closeAdminButton.addEventListener("click", () => {
+        adminPanel.hidden = true;
+      });
+
+      if (new URLSearchParams(location.search).get("admin") === "1") {
+        adminPanel.hidden = false;
+      }
+
+      window.addEventListener("load", () => {
+        loadDemographicModels().catch(error => {
+          console.warn("PulseCX: no se pudieron preparar los modelos locales", error);
+        });
+      });
 
       if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
         window.addEventListener("load", () => {
