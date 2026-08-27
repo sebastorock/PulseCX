@@ -514,7 +514,7 @@
 
     <footer class="footer">
       <span id="privacyNotice">La cámara se activa al responder · la foto no se guarda</span>
-      <span class="powered-by">Experiencia medida con PulseCX V2</span>
+      <span class="powered-by">Experiencia medida con PulseCX V2.1</span>
     </footer>
   </div>
 
@@ -598,6 +598,7 @@
       let activeInteraction = null;
       let demographicModelLoadPromise = null;
       let recognitionModelLoadPromise = null;
+      let protectionWarmupPromise = null;
       let inferenceQueue = Promise.resolve();
 
       const PROTECTION = Object.freeze({
@@ -635,7 +636,7 @@
         if (persist) localStorage.setItem(PROTECTION.enabledStorageKey, enabled ? "1" : "0");
         if (enabled) {
           window.setTimeout(() => {
-            loadRecognitionModels().catch(error => {
+            warmProtectionRuntime().catch(error => {
               console.warn("PulseCX: no se pudieron precargar los modelos de protección", error);
             });
           }, 0);
@@ -649,7 +650,7 @@
           device_id: "ucema-central-01",
           location_id: "ucema-sede-central",
           client_timestamp: new Date().toISOString(),
-          app_version: "web-prototype-2.0.0",
+          app_version: "web-prototype-2.1.0",
           camera_status: "starting",
           capture_ms: null,
           capture_width: null,
@@ -735,6 +736,28 @@
           throw error;
         });
         return recognitionModelLoadPromise;
+      }
+
+      function warmProtectionRuntime() {
+        if (protectionWarmupPromise) return protectionWarmupPromise;
+        protectionWarmupPromise = Promise.all([
+          loadRecognitionModels(),
+          openProtectionDatabase()
+        ]).then(async () => {
+          const warmupCanvas = document.createElement("canvas");
+          warmupCanvas.width = 224;
+          warmupCanvas.height = 224;
+          await faceapi.detectAllFaces(
+            warmupCanvas,
+            new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 })
+          );
+          adminModel.textContent = "Listo · protección precargada";
+          return true;
+        }).catch(error => {
+          protectionWarmupPromise = null;
+          throw error;
+        });
+        return protectionWarmupPromise;
       }
 
       function ageBand(age) {
@@ -1137,22 +1160,16 @@
             };
         }
 
-        try {
-          await submitResponse(interaction.event);
-          return {
-            registered: true,
-            title: "¡Gracias por tu opinión!",
-            message: "Tu respuesta fue recibida"
-          };
-        } catch (error) {
-          console.error("PulseCX: no se pudo registrar el voto", error);
-          return {
-            registered: false,
-            title: "No pudimos registrar tu voto",
-            message: "Por favor, intentá nuevamente.",
-            blocked: true
-          };
-        }
+        window.setTimeout(() => {
+          submitResponse(interaction.event).catch(error => {
+            console.error("PulseCX: no se pudo registrar el voto", error);
+          });
+        }, 0);
+        return {
+          registered: true,
+          title: "¡Gracias por tu opinión!",
+          message: "Tu respuesta fue recibida"
+        };
       }
 
       async function finishPublicInteraction(interaction) {
@@ -1270,6 +1287,11 @@
         loadDemographicModels().catch(error => {
           console.warn("PulseCX: no se pudieron preparar los modelos locales", error);
         });
+        window.setTimeout(() => {
+          warmProtectionRuntime().catch(error => {
+            console.warn("PulseCX: no se pudo precalentar la protección local", error);
+          });
+        }, 180);
       });
 
       if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
