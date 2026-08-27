@@ -343,6 +343,13 @@
     .confirmation.is-blocked .confirmation-icon { background: #b94747; }
     .confirmation.is-blocked strong { color: #9f3434; }
 
+    .confirmation.is-processing .confirmation-icon {
+      background: #2c5e91;
+      animation: processing-pulse 1s ease-in-out infinite;
+    }
+
+    .confirmation.is-processing strong { color: #17335b; }
+
     .portrait-warning {
       position: fixed;
       inset: 0;
@@ -431,6 +438,11 @@
       100% { transform: scale(1); }
     }
 
+    @keyframes processing-pulse {
+      0%, 100% { transform: scale(.92); opacity: .68; }
+      50% { transform: scale(1.06); opacity: 1; }
+    }
+
     @media (orientation: portrait) {
       .portrait-warning { display: grid; }
     }
@@ -502,7 +514,7 @@
 
     <footer class="footer">
       <span id="privacyNotice">La cámara se activa al responder · la foto no se guarda</span>
-      <span class="powered-by">Experiencia medida con PulseCX</span>
+      <span class="powered-by">Experiencia medida con PulseCX V2</span>
     </footer>
   </div>
 
@@ -564,6 +576,7 @@
 
       const choices = document.getElementById("choices");
       const confirmation = document.getElementById("confirmation");
+      const confirmationIcon = confirmation.querySelector(".confirmation-icon");
       const confirmationTitle = confirmation.querySelector("strong");
       const confirmationMessage = confirmation.querySelector("span");
       const fullscreenButton = document.getElementById("fullscreenButton");
@@ -620,6 +633,13 @@
           ? "Modo protegido · se usa una firma facial local por hasta 7 días · la foto no se guarda"
           : "La cámara se activa al responder · la foto no se guarda";
         if (persist) localStorage.setItem(PROTECTION.enabledStorageKey, enabled ? "1" : "0");
+        if (enabled) {
+          window.setTimeout(() => {
+            loadRecognitionModels().catch(error => {
+              console.warn("PulseCX: no se pudieron precargar los modelos de protección", error);
+            });
+          }, 0);
+        }
       }
 
       function createEvent(rating) {
@@ -629,7 +649,7 @@
           device_id: "ucema-central-01",
           location_id: "ucema-sede-central",
           client_timestamp: new Date().toISOString(),
-          app_version: "web-prototype-1.3.0",
+          app_version: "web-prototype-2.0.0",
           camera_status: "starting",
           capture_ms: null,
           capture_width: null,
@@ -869,7 +889,7 @@
         await loadRecognitionModels();
         const detections = await faceapi
           .detectAllFaces(canvas, new faceapi.TinyFaceDetectorOptions({
-            inputSize: 320,
+            inputSize: 224,
             scoreThreshold: PROTECTION.minimumDetectionScore
           }))
           .withFaceLandmarks()
@@ -1052,10 +1072,12 @@
         }
       }
 
-      function showConfirmation({ title, message, blocked = false }) {
+      function showConfirmation({ title, message, blocked = false, processing = false }) {
         confirmationTitle.textContent = title;
         confirmationMessage.textContent = message;
+        confirmationIcon.textContent = processing ? "…" : (blocked ? "!" : "✓");
         confirmation.classList.toggle("is-blocked", blocked);
+        confirmation.classList.toggle("is-processing", processing);
         confirmation.classList.add("is-visible");
         confirmation.setAttribute("aria-hidden", "false");
       }
@@ -1063,6 +1085,7 @@
       function hideConfirmation() {
         confirmation.classList.remove("is-visible");
         confirmation.classList.remove("is-blocked");
+        confirmation.classList.remove("is-processing");
         confirmation.setAttribute("aria-hidden", "true");
       }
 
@@ -1139,6 +1162,14 @@
 
         window.setTimeout(async () => {
           interaction.button.classList.remove("is-pressed");
+          showConfirmation({
+            title: "Validando tu respuesta…",
+            message: protectionMode.checked
+              ? "Estamos verificando la respuesta. Esperá un instante."
+              : "Estamos registrando tu opinión.",
+            processing: true
+          });
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
           const outcome = await processInteraction(interaction);
           showConfirmation(outcome);
 
