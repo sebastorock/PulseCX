@@ -747,7 +747,9 @@
       function loadQualityModel() {
         if (qualityModelPromise) return qualityModelPromise;
         if (!window.ort) return Promise.reject(new Error("No se cargó el verificador de calidad facial"));
-        ort.env.wasm.wasmPaths = "./vendor/";
+        // ort.min.js ya vive en /vendor/. Al fijar "./vendor/" desde ese
+        // archivo, ONNX Runtime terminaba buscando /vendor/vendor/ y fallaba
+        // la precarga. Dejamos que resuelva los binarios junto al runtime.
         ort.env.wasm.numThreads = 1;
         qualityModelPromise = ort.InferenceSession.create("./models/face_capture_quality.onnx", { executionProviders: ["wasm"] });
         return qualityModelPromise;
