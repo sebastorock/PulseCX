@@ -1,9 +1,11 @@
-const CACHE_NAME = "pulsecx-ucema-v6";
+const CACHE_NAME = "pulsecx-ucema-v7";
 const APP_FILES = [
   "./",
   "./index.html",
   "./site.webmanifest",
   "./vendor/face-api.min.js",
+  "./vendor/ort.min.js",
+  "./vendor/ort-wasm-simd-threaded.wasm",
   "./models/tiny_face_detector_model-weights_manifest.json",
   "./models/tiny_face_detector_model-shard1",
   "./models/age_gender_model-weights_manifest.json",
@@ -13,6 +15,7 @@ const APP_FILES = [
   "./models/face_recognition_model-weights_manifest.json",
   "./models/face_recognition_model-shard1",
   "./models/face_recognition_model-shard2",
+  "./models/face_capture_quality.onnx",
   "./assets/icons/pulsecx-192.png",
   "./assets/icons/pulsecx-512.png",
   "./assets/emojis/pulse-negative-red.png",

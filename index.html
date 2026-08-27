@@ -516,7 +516,7 @@
 
     <footer class="footer">
       <span id="privacyNotice">La cámara se activa al responder · la foto no se guarda</span>
-      <span class="powered-by"><span class="preload-ready-mark" id="preloadReadyMark" hidden aria-hidden="true">✓</span> Experiencia medida con PulseCX V2.1</span>
+      <span class="powered-by"><span class="preload-ready-mark" id="preloadReadyMark" hidden aria-hidden="true">✓</span> Experiencia medida con PulseCX V2.2</span>
     </footer>
   </div>
 
@@ -552,6 +552,7 @@
     </div>
   </section>
 
+  <script src="vendor/ort.min.js"></script>
   <script src="vendor/face-api.min.js"></script>
   <script>
     (() => {
@@ -602,6 +603,7 @@
       let demographicModelLoadPromise = null;
       let recognitionModelLoadPromise = null;
       let protectionWarmupPromise = null;
+      let qualityModelPromise = null;
       let inferenceQueue = Promise.resolve();
 
       const PROTECTION = Object.freeze({
@@ -613,6 +615,7 @@
         minimumDetectionScore: 0.55,
         matchDistance: 0.5
       });
+      const QUALITY = Object.freeze({ usableMin: 0.58, occludedMax: 0.42 });
       let protectionDatabasePromise = null;
 
       async function enterFullscreen() {
@@ -653,7 +656,7 @@
           device_id: "ucema-central-01",
           location_id: "ucema-sede-central",
           client_timestamp: new Date().toISOString(),
-          app_version: "web-prototype-2.1.0",
+          app_version: "web-prototype-2.2.0",
           camera_status: "starting",
           capture_ms: null,
           capture_width: null,
@@ -741,11 +744,43 @@
         return recognitionModelLoadPromise;
       }
 
+      function loadQualityModel() {
+        if (qualityModelPromise) return qualityModelPromise;
+        if (!window.ort) return Promise.reject(new Error("No se cargó el verificador de calidad facial"));
+        ort.env.wasm.wasmPaths = "./vendor/";
+        ort.env.wasm.numThreads = 1;
+        qualityModelPromise = ort.InferenceSession.create("./models/face_capture_quality.onnx", { executionProviders: ["wasm"] });
+        return qualityModelPromise;
+      }
+
+      async function evaluateFaceQuality(canvas, detection) {
+        const session = await loadQualityModel();
+        const box = detection.box;
+        const side = Math.max(box.width, box.height) * 1.2;
+        const sourceX = Math.max(0, box.x + box.width / 2 - side / 2);
+        const sourceY = Math.max(0, box.y + box.height / 2 - side / 2);
+        const sourceSide = Math.min(side, canvas.width - sourceX, canvas.height - sourceY);
+        const crop = document.createElement("canvas");
+        crop.width = 160; crop.height = 160;
+        crop.getContext("2d", { willReadFrequently: true }).drawImage(canvas, sourceX, sourceY, sourceSide, sourceSide, 0, 0, 160, 160);
+        const pixels = crop.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, 160, 160).data;
+        const input = new Float32Array(3 * 160 * 160);
+        for (let index = 0; index < 160 * 160; index += 1) {
+          input[index] = pixels[index * 4] / 255;
+          input[160 * 160 + index] = pixels[index * 4 + 1] / 255;
+          input[2 * 160 * 160 + index] = pixels[index * 4 + 2] / 255;
+        }
+        const output = await session.run({ [session.inputNames[0]]: new ort.Tensor("float32", input, [1, 3, 160, 160]) });
+        const values = output[session.outputNames[0]].data;
+        return { usable: values[3], occluded: values[5], blur: values[4], badExposure: values[6] };
+      }
+
       function warmProtectionRuntime() {
         if (protectionWarmupPromise) return protectionWarmupPromise;
         protectionWarmupPromise = Promise.all([
           loadRecognitionModels(),
-          openProtectionDatabase()
+          openProtectionDatabase(),
+          loadQualityModel()
         ]).then(async () => {
           const warmupCanvas = document.createElement("canvas");
           warmupCanvas.width = 224;
@@ -949,6 +984,18 @@
         }
 
         const detection = detections[0];
+        const quality = await evaluateFaceQuality(canvas, detection.detection);
+        if (quality.usable < QUALITY.usableMin || quality.occluded > QUALITY.occludedMax) {
+          return {
+            demographics: base,
+            protection: {
+              allowed: false,
+              reason: "face_occluded",
+              quality,
+              validation_ms: Math.round(performance.now() - startedAt)
+            }
+          };
+        }
         const confidence = Number(detection.genderProbability.toFixed(3));
         const demographics = {
           ...base,
