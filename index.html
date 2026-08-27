@@ -124,6 +124,63 @@
       outline-offset: 3px;
     }
 
+    .protection-control {
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      color: #fff;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .protection-control input {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      opacity: 0;
+    }
+
+    .protection-switch {
+      width: 45px;
+      height: 25px;
+      position: relative;
+      flex: 0 0 auto;
+      border-radius: 999px;
+      background: rgba(255,255,255,.3);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.52);
+      transition: background 160ms ease;
+    }
+
+    .protection-switch::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 19px;
+      height: 19px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform 160ms ease;
+    }
+
+    .protection-control input:checked + .protection-switch { background: #26a269; }
+    .protection-control input:checked + .protection-switch::after { transform: translateX(20px); }
+    .protection-control input:focus-visible + .protection-switch { outline: 3px solid rgba(255,255,255,.82); outline-offset: 3px; }
+
+    .protection-reset {
+      min-height: 38px;
+      border: 1px solid rgba(255,255,255,.58);
+      border-radius: 9px;
+      padding: 0 12px;
+      color: #fff;
+      background: transparent;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .protection-reset:active { background: rgba(255,255,255,.18); }
+
     .fullscreen-icon {
       width: 18px;
       height: 18px;
@@ -283,6 +340,9 @@
       text-align: center;
     }
 
+    .confirmation.is-blocked .confirmation-icon { background: #b94747; }
+    .confirmation.is-blocked strong { color: #9f3434; }
+
     .portrait-warning {
       position: fixed;
       inset: 0;
@@ -403,6 +463,12 @@
       </div>
       <div class="header-actions">
         <div class="location">Sede Central</div>
+        <label class="protection-control" for="protectionMode">
+          <span id="protectionLabel">Modo desprotegido</span>
+          <input id="protectionMode" type="checkbox" role="switch" aria-label="Activar modo protegido">
+          <span class="protection-switch" aria-hidden="true"></span>
+        </label>
+        <button class="protection-reset" id="resetProtectionButton" type="button" hidden>Reiniciar límites</button>
         <button class="fullscreen-button" id="fullscreenButton" type="button" aria-label="Ver en pantalla completa">
           <svg class="fullscreen-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/>
@@ -435,7 +501,7 @@
     </main>
 
     <footer class="footer">
-      <span>La cámara se activa al responder · la foto no se guarda</span>
+      <span id="privacyNotice">La cámara se activa al responder · la foto no se guarda</span>
       <span class="powered-by">Experiencia medida con PulseCX</span>
     </footer>
   </div>
@@ -498,7 +564,13 @@
 
       const choices = document.getElementById("choices");
       const confirmation = document.getElementById("confirmation");
+      const confirmationTitle = confirmation.querySelector("strong");
+      const confirmationMessage = confirmation.querySelector("span");
       const fullscreenButton = document.getElementById("fullscreenButton");
+      const protectionMode = document.getElementById("protectionMode");
+      const protectionLabel = document.getElementById("protectionLabel");
+      const privacyNotice = document.getElementById("privacyNotice");
+      const resetProtectionButton = document.getElementById("resetProtectionButton");
       const cameraBuffer = document.getElementById("cameraBuffer");
       const adminPanel = document.getElementById("adminPanel");
       const adminVibration = document.getElementById("adminVibration");
@@ -514,6 +586,17 @@
       let modelLoadPromise = null;
       let inferenceQueue = Promise.resolve();
 
+      const PROTECTION = Object.freeze({
+        enabledStorageKey: "pulsecx.protectedMode",
+        databaseName: "pulsecx-protection-v1",
+        storeName: "face-signatures",
+        retentionMs: 7 * 24 * 60 * 60 * 1000,
+        maximumVotes: 2,
+        minimumDetectionScore: 0.72,
+        matchDistance: 0.5
+      });
+      let protectionDatabasePromise = null;
+
       async function enterFullscreen() {
         try {
           if (!document.fullscreenElement) {
@@ -526,6 +609,16 @@
         } catch (error) {
           console.warn("PulseCX: el navegador no permitió la pantalla completa", error);
         }
+      }
+
+      function setProtectionMode(enabled, { persist = true } = {}) {
+        protectionMode.checked = enabled;
+        resetProtectionButton.hidden = !enabled;
+        protectionLabel.textContent = enabled ? "Modo protegido" : "Modo desprotegido";
+        privacyNotice.textContent = enabled
+          ? "Modo protegido · se usa una firma facial local por hasta 7 días · la foto no se guarda"
+          : "La cámara se activa al responder · la foto no se guarda";
+        if (persist) localStorage.setItem(PROTECTION.enabledStorageKey, enabled ? "1" : "0");
       }
 
       function createEvent(rating) {
@@ -597,7 +690,9 @@
         adminModel.textContent = "Cargando…";
         modelLoadPromise = Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri(CONFIG.modelPath),
-          faceapi.nets.ageGenderNet.loadFromUri(CONFIG.modelPath)
+          faceapi.nets.ageGenderNet.loadFromUri(CONFIG.modelPath),
+          faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelPath),
+          faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelPath)
         ]).then(() => {
           adminModel.textContent = "Listo · procesamiento local";
           return true;
@@ -673,6 +768,112 @@
         const next = inferenceQueue.then(() => runDemographicInference(canvas));
         inferenceQueue = next.catch(() => {});
         return next;
+      }
+
+      function openProtectionDatabase() {
+        if (protectionDatabasePromise) return protectionDatabasePromise;
+
+        protectionDatabasePromise = new Promise((resolve, reject) => {
+          const request = indexedDB.open(PROTECTION.databaseName, 1);
+          request.onupgradeneeded = () => {
+            const database = request.result;
+            if (!database.objectStoreNames.contains(PROTECTION.storeName)) {
+              database.createObjectStore(PROTECTION.storeName, { keyPath: "id" });
+            }
+          };
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error || new Error("No se pudo abrir la protección local"));
+        });
+        return protectionDatabasePromise;
+      }
+
+      function descriptorDistance(first, second) {
+        let sum = 0;
+        for (let index = 0; index < first.length; index += 1) {
+          const difference = first[index] - second[index];
+          sum += difference * difference;
+        }
+        return Math.sqrt(sum);
+      }
+
+      async function registerProtectedSignature(descriptor, now) {
+        const database = await openProtectionDatabase();
+        return new Promise((resolve, reject) => {
+          const transaction = database.transaction(PROTECTION.storeName, "readwrite");
+          const store = transaction.objectStore(PROTECTION.storeName);
+          let result;
+          transaction.oncomplete = () => resolve(result);
+          transaction.onerror = () => reject(transaction.error || new Error("No se pudo actualizar la protección local"));
+          transaction.onabort = () => reject(transaction.error || new Error("Se canceló la protección local"));
+
+          const allRequest = store.getAll();
+          allRequest.onsuccess = () => {
+            const activeEntries = allRequest.result.filter(entry => {
+              if (now - entry.lastSeenAt > PROTECTION.retentionMs) {
+                store.delete(entry.id);
+                return false;
+              }
+              return true;
+            });
+            const closest = activeEntries.reduce((best, entry) => {
+              const distance = descriptorDistance(descriptor, entry.descriptor);
+              return !best || distance < best.distance ? { entry, distance } : best;
+            }, null);
+            const matched = closest && closest.distance <= PROTECTION.matchDistance;
+            const entry = matched ? closest.entry : {
+              id: crypto.randomUUID(),
+              descriptor,
+              firstSeenAt: now,
+              voteCount: 0
+            };
+            entry.lastSeenAt = now;
+            entry.voteCount += 1;
+            store.put(entry);
+            result = {
+              allowed: entry.voteCount <= PROTECTION.maximumVotes,
+              reason: entry.voteCount <= PROTECTION.maximumVotes ? "accepted" : "repeat_limit",
+              vote_count: entry.voteCount,
+              match_distance: closest ? Number(closest.distance.toFixed(3)) : null
+            };
+          };
+        });
+      }
+
+      async function clearProtectedSignatures() {
+        const database = await openProtectionDatabase();
+        return new Promise((resolve, reject) => {
+          const transaction = database.transaction(PROTECTION.storeName, "readwrite");
+          transaction.objectStore(PROTECTION.storeName).clear();
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error || new Error("No se pudo reiniciar la protección local"));
+          transaction.onabort = () => reject(transaction.error || new Error("Se canceló el reinicio de la protección local"));
+        });
+      }
+
+      async function validateProtectedVote(canvas) {
+        const startedAt = performance.now();
+        await loadDemographicModels();
+        const detections = await faceapi
+          .detectAllFaces(canvas, new faceapi.TinyFaceDetectorOptions({
+            inputSize: 320,
+            scoreThreshold: PROTECTION.minimumDetectionScore
+          }))
+          .withFaceLandmarks()
+          .withFaceDescriptors();
+
+        if (detections.length !== 1) {
+          return {
+            allowed: false,
+            reason: detections.length ? "multiple_faces" : "face_not_verified",
+            face_count: detections.length,
+            validation_ms: Math.round(performance.now() - startedAt)
+          };
+        }
+
+        const descriptor = Array.from(detections[0].descriptor);
+        const now = Date.now();
+        const result = await registerProtectedSignature(descriptor, now);
+        return { ...result, validation_ms: Math.round(performance.now() - startedAt) };
       }
 
       function withTimeout(promise, timeoutMs, message) {
@@ -757,11 +958,24 @@
           stopCamera(stream);
           stream = null;
           const demographics = await inferDemographics(canvas);
+          let protection = { mode: "unprotected", allowed: true, reason: "not_enabled" };
+          if (protectionMode.checked) {
+            try {
+              protection = { mode: "protected", ...(await validateProtectedVote(canvas)) };
+            } catch (error) {
+              protection = {
+                mode: "protected",
+                allowed: false,
+                reason: "validation_error",
+                validation_error: error.message
+              };
+            }
+          }
 
           context.clearRect(0, 0, canvas.width, canvas.height);
           canvas.width = 0;
           canvas.height = 0;
-          return { ...result, ...demographics };
+          return { ...result, ...demographics, protection };
         } catch (error) {
           return {
             camera_status: error.name === "NotAllowedError"
@@ -778,13 +992,17 @@
         }
       }
 
-      function showConfirmation() {
+      function showConfirmation({ title, message, blocked = false }) {
+        confirmationTitle.textContent = title;
+        confirmationMessage.textContent = message;
+        confirmation.classList.toggle("is-blocked", blocked);
         confirmation.classList.add("is-visible");
         confirmation.setAttribute("aria-hidden", "false");
       }
 
       function hideConfirmation() {
         confirmation.classList.remove("is-visible");
+        confirmation.classList.remove("is-blocked");
         confirmation.setAttribute("aria-hidden", "true");
       }
 
@@ -819,21 +1037,50 @@
         Object.assign(interaction.event, cameraResult);
         updateAdminStatus(interaction.event);
 
+        const protection = interaction.event.protection;
+        if (protection?.mode === "protected" && !protection.allowed) {
+          return protection.reason === "repeat_limit"
+            ? {
+              registered: false,
+              title: "Voto no registrado",
+              message: "Detectamos múltiples respuestas de la misma persona en los últimos 7 días.",
+              blocked: true
+            }
+            : {
+              registered: false,
+              title: "No pudimos validar el voto",
+              message: "Para responder en modo protegido, acercate y asegurate de que haya una sola cara visible.",
+              blocked: true
+            };
+        }
+
         try {
           await submitResponse(interaction.event);
+          return {
+            registered: true,
+            title: "¡Gracias por tu opinión!",
+            message: "Tu respuesta fue recibida"
+          };
         } catch (error) {
           console.error("PulseCX: no se pudo registrar el voto", error);
+          return {
+            registered: false,
+            title: "No pudimos registrar tu voto",
+            message: "Por favor, intentá nuevamente.",
+            blocked: true
+          };
         }
       }
 
-      function finishPublicInteraction(interaction) {
+      async function finishPublicInteraction(interaction) {
         if (interaction.finished) return;
         interaction.finished = true;
         window.clearTimeout(interaction.recoveryTimer);
 
-        window.setTimeout(() => {
+        window.setTimeout(async () => {
           interaction.button.classList.remove("is-pressed");
-          showConfirmation();
+          const outcome = await processInteraction(interaction);
+          showConfirmation(outcome);
 
           window.setTimeout(() => {
             hideConfirmation();
@@ -842,8 +1089,6 @@
             activeInteraction = null;
           }, CONFIG.confirmationDurationMs);
         }, CONFIG.pressDurationMs);
-
-        processInteraction(interaction);
       }
 
       function handleChoice(button) {
@@ -898,6 +1143,21 @@
       });
 
       fullscreenButton.addEventListener("click", enterFullscreen);
+      protectionMode.addEventListener("change", () => setProtectionMode(protectionMode.checked));
+      resetProtectionButton.addEventListener("click", async () => {
+        if (!window.confirm("¿Reiniciar los límites? Se eliminarán las firmas biométricas locales y todas las personas podrán volver a votar.")) return;
+        resetProtectionButton.disabled = true;
+        try {
+          await clearProtectedSignatures();
+          resetProtectionButton.textContent = "Límites reiniciados";
+          window.setTimeout(() => { resetProtectionButton.textContent = "Reiniciar límites"; }, 2200);
+        } catch (error) {
+          console.error("PulseCX: no se pudieron reiniciar los límites", error);
+          window.alert("No se pudieron reiniciar los límites. Intentá nuevamente.");
+        } finally {
+          resetProtectionButton.disabled = false;
+        }
+      });
       testCameraButton.addEventListener("click", runCameraDiagnostic);
       testVibrationButton.addEventListener("click", () => {
         const accepted = vibrate();
@@ -912,6 +1172,8 @@
       if (new URLSearchParams(location.search).get("admin") === "1") {
         adminPanel.hidden = false;
       }
+
+      setProtectionMode(localStorage.getItem(PROTECTION.enabledStorageKey) === "1", { persist: false });
 
       window.addEventListener("load", () => {
         loadDemographicModels().catch(error => {

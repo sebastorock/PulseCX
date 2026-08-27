@@ -13,9 +13,9 @@ Este repositorio contiene la PWA que se instala en la tablet. La versión actual
 - descarte automático del resultado cuando no hay un rostro o aparecen varios;
 - medición de tiempo y resolución de captura;
 - funcionamiento offline de la interfaz mediante service worker;
-- envío simulado, todavía sin backend.
+- envío real al backend de Google Apps Script;
 
-No almacena ni transmite fotografías. El evento preparado para el futuro HTTP POST contiene sólo datos derivados, nunca la imagen.
+No almacena ni transmite fotografías. El HTTP POST contiene sólo el voto, datos técnicos y estimaciones derivadas, nunca la imagen.
 
 ## Publicación en GitHub Pages
 
