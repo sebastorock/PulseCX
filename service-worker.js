@@ -1,4 +1,4 @@
-const CACHE_NAME = "pulsecx-ucema-v8";
+const CACHE_NAME = "pulsecx-ucema-v9";
 const APP_FILES = [
   "./",
   "./index.html",

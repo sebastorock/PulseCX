@@ -615,7 +615,10 @@
         minimumDetectionScore: 0.55,
         matchDistance: 0.5
       });
-      const QUALITY = Object.freeze({ usableMin: 0.58, occludedMax: 0.42 });
+      // La cámara frontal de una tablet entrega recortes más suaves que las
+      // imágenes de laboratorio del modelo. Rechazamos sólo la combinación
+      // inequívoca de cara poco usable + oclusión muy alta, no una señal sola.
+      const QUALITY = Object.freeze({ usableMin: 0.25, occludedMin: 0.65 });
       let protectionDatabasePromise = null;
 
       async function enterFullscreen() {
@@ -987,7 +990,7 @@
 
         const detection = detections[0];
         const quality = await evaluateFaceQuality(canvas, detection.detection);
-        if (quality.usable < QUALITY.usableMin || quality.occluded > QUALITY.occludedMax) {
+        if (quality.usable < QUALITY.usableMin && quality.occluded > QUALITY.occludedMin) {
           return {
             demographics: base,
             protection: {
