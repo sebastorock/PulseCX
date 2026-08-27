@@ -583,7 +583,8 @@
       const closeAdminButton = document.getElementById("closeAdminButton");
       let isSubmitting = false;
       let activeInteraction = null;
-      let modelLoadPromise = null;
+      let demographicModelLoadPromise = null;
+      let recognitionModelLoadPromise = null;
       let inferenceQueue = Promise.resolve();
 
       const PROTECTION = Object.freeze({
@@ -592,7 +593,7 @@
         storeName: "face-signatures",
         retentionMs: 7 * 24 * 60 * 60 * 1000,
         maximumVotes: 2,
-        minimumDetectionScore: 0.72,
+        minimumDetectionScore: 0.55,
         matchDistance: 0.5
       });
       let protectionDatabasePromise = null;
@@ -680,19 +681,17 @@
       }
 
       function loadDemographicModels() {
-        if (modelLoadPromise) return modelLoadPromise;
+        if (demographicModelLoadPromise) return demographicModelLoadPromise;
 
         if (!window.faceapi) {
-          modelLoadPromise = Promise.reject(new Error("No se cargó la biblioteca de análisis"));
-          return modelLoadPromise;
+          demographicModelLoadPromise = Promise.reject(new Error("No se cargó la biblioteca de análisis"));
+          return demographicModelLoadPromise;
         }
 
         adminModel.textContent = "Cargando…";
-        modelLoadPromise = Promise.all([
+        demographicModelLoadPromise = Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri(CONFIG.modelPath),
-          faceapi.nets.ageGenderNet.loadFromUri(CONFIG.modelPath),
-          faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelPath),
-          faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelPath)
+          faceapi.nets.ageGenderNet.loadFromUri(CONFIG.modelPath)
         ]).then(() => {
           adminModel.textContent = "Listo · procesamiento local";
           return true;
@@ -700,7 +699,22 @@
           adminModel.textContent = `Error · ${error.message}`;
           throw error;
         });
-        return modelLoadPromise;
+        return demographicModelLoadPromise;
+      }
+
+      function loadRecognitionModels() {
+        if (recognitionModelLoadPromise) return recognitionModelLoadPromise;
+        recognitionModelLoadPromise = loadDemographicModels().then(() => Promise.all([
+          faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelPath),
+          faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelPath)
+        ])).then(() => {
+          adminModel.textContent = "Listo · protección local";
+          return true;
+        }).catch(error => {
+          adminModel.textContent = `Error · ${error.message}`;
+          throw error;
+        });
+        return recognitionModelLoadPromise;
       }
 
       function ageBand(age) {
@@ -850,30 +864,61 @@
         });
       }
 
-      async function validateProtectedVote(canvas) {
+      async function analyzeProtectedVote(canvas) {
         const startedAt = performance.now();
-        await loadDemographicModels();
+        await loadRecognitionModels();
         const detections = await faceapi
           .detectAllFaces(canvas, new faceapi.TinyFaceDetectorOptions({
             inputSize: 320,
             scoreThreshold: PROTECTION.minimumDetectionScore
           }))
           .withFaceLandmarks()
-          .withFaceDescriptors();
+          .withFaceDescriptors()
+          .withAgeAndGender();
+
+        const base = {
+          model_status: detections.length === 1 ? "estimated" : (detections.length ? "multiple_faces" : "no_face"),
+          face_detected: detections.length > 0,
+          face_count: detections.length,
+          face_detection_confidence: detections.length === 1
+            ? Number(detections[0].detection.score.toFixed(3))
+            : null,
+          apparent_presentation: "uncertain",
+          presentation_confidence: null,
+          estimated_age_band: "uncertain",
+          inference_ms: Math.round(performance.now() - startedAt)
+        };
 
         if (detections.length !== 1) {
           return {
-            allowed: false,
-            reason: detections.length ? "multiple_faces" : "face_not_verified",
-            face_count: detections.length,
-            validation_ms: Math.round(performance.now() - startedAt)
+            demographics: base,
+            protection: {
+              allowed: false,
+              reason: detections.length ? "multiple_faces" : "face_not_verified",
+              face_count: detections.length,
+              validation_ms: Math.round(performance.now() - startedAt)
+            }
           };
         }
 
-        const descriptor = Array.from(detections[0].descriptor);
+        const detection = detections[0];
+        const confidence = Number(detection.genderProbability.toFixed(3));
+        const demographics = {
+          ...base,
+          apparent_presentation: confidence >= CONFIG.presentationConfidenceMin
+            ? (detection.gender === "male" ? "masculine" : "feminine")
+            : "uncertain",
+          presentation_confidence: confidence,
+          estimated_age_band: ageBand(detection.age),
+          inference_ms: Math.round(performance.now() - startedAt)
+        };
+        const descriptor = Array.from(detection.descriptor);
         const now = Date.now();
         const result = await registerProtectedSignature(descriptor, now);
-        return { ...result, validation_ms: Math.round(performance.now() - startedAt) };
+        return {
+          demographics,
+          protection: { ...result, validation_ms: Math.round(performance.now() - startedAt) }
+        };
       }
 
       function withTimeout(promise, timeoutMs, message) {
@@ -957,12 +1002,25 @@
           // La cámara ya no es necesaria: se apaga antes de analizar el fotograma en memoria.
           stopCamera(stream);
           stream = null;
-          const demographics = await inferDemographics(canvas);
+          let demographics;
           let protection = { mode: "unprotected", allowed: true, reason: "not_enabled" };
           if (protectionMode.checked) {
             try {
-              protection = { mode: "protected", ...(await validateProtectedVote(canvas)) };
+              const analysis = await analyzeProtectedVote(canvas);
+              demographics = analysis.demographics;
+              protection = { mode: "protected", ...analysis.protection };
             } catch (error) {
+              demographics = {
+                model_status: "error",
+                face_detected: false,
+                face_count: 0,
+                face_detection_confidence: null,
+                apparent_presentation: "not_available",
+                presentation_confidence: null,
+                estimated_age_band: "not_available",
+                inference_ms: null,
+                inference_error: error.message
+              };
               protection = {
                 mode: "protected",
                 allowed: false,
@@ -970,6 +1028,8 @@
                 validation_error: error.message
               };
             }
+          } else {
+            demographics = await inferDemographics(canvas);
           }
 
           context.clearRect(0, 0, canvas.width, canvas.height);
